@@ -1,0 +1,225 @@
+---
+title: "Systematic survey report"
+author: "Madalina Olteanu, Fabrice Rossi & Florian Yger"
+date: "January 2023"
+output: html_document
+---
+
+```{css, echo=FALSE}
+span.C1 {
+  color: grey;
+}
+span.C2 {
+  color: grey;
+}
+span.C3 {
+  color: #d7301f;
+  text-decoration-line: underline;
+}
+span.C4 {
+  color: #fdcc8a;
+}
+span.C5 {
+  color: #fc8d59;
+}
+span.C6 {
+  font-weight: bold;
+  color: #d7301f;
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(stringr)
+```
+
+```{r}
+s2qdir <- "s2q"
+s2_curated_papers <- read_csv(file.path(s2qdir, "s2_papers_curated.csv"))
+s2_curated_papers <-
+  s2_curated_papers |>
+  distinct(id, .keep_all = TRUE) |>
+  arrange(title)
+gsqdir <- "gsq"
+gs_curated_papers <-
+  read_csv(file.path(gsqdir, "gs_papers_curated.csv"),
+    col_types = cols(
+      id = col_character(),
+      title = col_character(),
+      query = col_character(),
+      s2_id = col_character()
+    )
+  )
+```
+
+```{r}
+paper_stats <- tibble(
+  Site = c("Semantic Scholar", "Google Scholar"),
+  Answers = c(400, 400),
+  `Unique papers` = c(nrow(s2_curated_papers), nrow(gs_curated_papers))
+)
+gs_in_s2 <-
+  gs_curated_papers |>
+  filter(!is.na(s2_id))
+gs_dup_s2 <- gs_in_s2 |>
+  nrow() - gs_in_s2 |>
+  distinct(s2_id) |>
+  nrow()
+gs_in_s2 <-
+  gs_in_s2 |> distinct(s2_id, .keep_all = TRUE)
+s2_dup <- s2_curated_papers |>
+  filter(!is.na(duplicated)) |>
+  nrow()
+paper_stats$Duplicated <- c(s2_dup, gs_dup_s2)
+```
+
+```{r}
+s2_only <- s2_curated_papers |> anti_join(gs_curated_papers, by = c(id = "s2_id"))
+gs_only <- gs_curated_papers |>
+  filter(is.na(s2_id)) |>
+  select(-s2_id)
+both <- s2_curated_papers |> semi_join(gs_curated_papers, by = c(id = "s2_id"))
+paper_stats$Specific <- c(nrow(s2_only), nrow(gs_only))
+```
+
+```{r}
+survey_results <- read_csv("survey_results.csv", col_types = cols(
+  index = col_integer(),
+  class = col_integer(),
+  title = col_character(),
+  type = col_character(),
+  language = col_character(),
+  set = col_character(),
+  s2_id = col_character(),
+  gs_id = col_character(),
+  alternate_gs_id = col_character(),
+  alternate_s2_id = col_character(),
+  original_article = col_character()
+))
+```
+
+## Initial queries
+### Aggregated statistics 
+We collected the first 100 answers to the four queries on both [Google Scholar (GS)](https://scholar.google.com) 
+and [Semantic Scholar (S2)](https://www.semanticscholar.org/). As shown in the 
+following table, answers from GS are less variable than those from S2. GS has only 
+one undetected duplicate, which corresponds to two versions of the Chandola et al. 
+survey. 
+
+```{r}
+knitr::kable(paper_stats)
+```
+The two sets of answers have `r gs_in_s2 |> nrow()` papers in common which could be
+seen as surprisingly low. Combined, the queries identified `r survey_results |> nrow()` documents.
+
+### Result quality
+```{r}
+not_english <- survey_results |> filter(language!="English") |> nrow()
+not_paper <- survey_results |> filter(type %in% c("master thesis", "plagiarism", "student", "non existent")) |> nrow()
+preprint <- survey_results |> filter(type =="preprint") |> nrow()
+```
+
+In addition to the duplicated papers, a few of the results have been excluded from 
+the subsequent analysis because of various issues:
+
+- `r not_english` papers were not written in English
+- `r not_paper` documents were excluded for various issues: a blatant case of plagiarism, 
+  a master thesis, a paper from a student workshop and papers that were impossible
+  to track on any publication platform (2 papers)
+- `r preprint`  documents were preprints available only on Arxiv
+
+Note also that `r survey_results |> filter(is.na(s2_id)) |> nrow()` papers found on 
+GS were not indexed by S2.
+
+
+```{r}
+survey_results <- survey_results |> mutate(on_topic = class >= 4)
+on_topic_papers <- survey_results |> filter(on_topic)
+on_topic_counts <- survey_results |> filter(class !=1) |> group_by(set, on_topic) |> summarise(N=n())
+on_topic_rates <- on_topic_counts |> 
+  mutate(freq=100*N/sum(N)) |> 
+  filter(on_topic) |> 
+  select(Set=set, `On topic %`=freq)
+```
+
+We read the titles and abstracts of the remaining `r survey_results |> filter(class !=1) |> nrow()` 
+papers to selected the ones that were actually about outlier and anomaly detection, finding 
+a total of `r nrow(on_topic_papers)` papers.
+
+Notice that, as expected, the precision of the queries depend on the set, as 
+shown on the following table:
+```{r}
+knitr::kable(on_topic_rates)
+```
+
+Notice that while the common papers between GS and SS are much more likely to
+be on topic, we would have miss a lot of potential candidates by focusing only
+on one of the two search engines, as shown by the row counts of papers:
+```{r}
+knitr::kable(on_topic_counts |> filter(on_topic) |> select(Set = set, `Papers on topic` = N))
+```
+
+### Paper selection 
+Finally based on titles, abstracts and on reading the papers when needed, we
+identified a total of `r survey_results |> filter(class==6) |> nrow()` general
+survey paper. The breakdown of the papers between sources is given below and justify 
+again using both search engines:
+```{r}
+knitr::kable(survey_results |> filter(class==6) |> count(set)|> select(Set = set, `General survey` = n))
+```
+
+We also identified a large collection of `r survey_results |> filter(class==5) |> nrow()` 
+papers that surveyed some specific aspects of outlier/anomaly detection but they
+were not general enough to be considered in the meta-survey. The breakdown by source 
+is the following one:
+```{r}
+knitr::kable(survey_results |> filter(class==5) |> count(set)|> select(Set = set, `Specific survey` = n))
+```
+
+
+## Paper list
+```{r}
+class_name <- c("Excluded", "Not on outliers", "Text book or tutorial", "Not a survey", "Not a general survey", "General survey")
+counts <- bind_cols(tibble(type=class_name), survey_results |> count(class) |> mutate(class=str_c("C", class), n))
+knitr::kable(counts)
+```
+
+### Color codes
+```{=html}
+<ul>
+  <li>C6 : <span class="C6">General survey papers about outlier detection (selected)</span></li>
+  <li>C5 : <span class="C5">Survey papers about specific aspects of outlier detection</span></li>
+  <li>C4 : <span class="C4">about outlier/anomaly but not surveys</span></li>
+  <li>C3 : <span class="C3">monographs, text books, chapters or tutorial about outlier detection</span></li>
+  <li>C2 : <span class="C2">not about outlier/anomaly </span></li>
+  <li>C1 : <span class="C1">excluded papers</span></li>
+</ul>  
+```
+
+### Full list
+```{r, results='asis'}
+cat("<ul>\n")
+#for (i in 1:5) {
+for (i in 1:nrow(survey_results)) {
+  paper_class <- paste0("C", survey_results$class[i])
+  cat("<li>", survey_results$index[i], " ", paper_class, "\n", sep="")
+  if (!is.na(survey_results$s2_id[i])) {
+    cat("<a href=\"https://www.semanticscholar.org/paper/", survey_results$s2_id[i], "\">", sep = "")
+  } else if (!is.na(survey_results$gs_id[i])) {
+    cat("<a href=\"https://scholar.google.com/scholar?cluster=", survey_results$gs_id[i], "&hl=en\">", sep = "")
+  }
+  cat("<span class=\"", paper_class, "\">", survey_results$title[i], "</span>", sep = "")
+  if (!is.na(survey_results$s2_id[i])) {
+    cat(" (on S2)</a>")
+  } else if (!is.na(survey_results$gs_id[i])) {
+    cat(" (on GS)</a>")
+  }
+  cat("</li>\n")
+}
+cat("</ul>\n")
+```
